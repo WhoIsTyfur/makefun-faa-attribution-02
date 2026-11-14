@@ -2,48 +2,131 @@
 
 Reads every *.in case in $MAKEFUN_INPUT_DIR (default /input), writes one .out per case
 to $MAKEFUN_OUTPUT_DIR (default /output). Standard library only, deterministic.
+
+Model, per market, all in logit space (bounded in (0, 1), skewed for prices near 0):
+  1. a volatility fan: robust volatility of 1-minute logit changes (each move clipped at
+     CLIP x the median nonzero move, so a launch burst does not dominate), mixing a short
+     and a long window, spread over the horizon as h^EXPO (sub-diffusive: thin books flip
+     back and forth more than they trend); the 25/75% quantiles are scaled by how often the
+     book ticks at all, so a market that rarely moves keeps its inner quantiles near the
+     last price, which is what pinball loss rewards;
+  2. empirical quantiles of the market's own h-minute logit changes, recency weighted;
+  3. the forecast is W x (1) + (1 - W) x (2), quantile by quantile.
+The median is the last price: on these markets it beat every drift or reversion tried.
 """
+import bisect
 import json
 import math
 import os
 
+TAUS = (0.05, 0.25, 0.5, 0.75, 0.95)
 Z = (-1.644854, -0.674490, 0.0, 0.674490, 1.644854)
 
-
-def recent_sigma(prices, window=720):
-    """Per-sqrt-minute volatility from the last `window` one-minute changes."""
-    p = prices[-(window + 1):]
-    if len(p) < 3:
-        return 0.0025
-    ss = 0.0
-    for a, b in zip(p, p[1:]):
-        ss += (b - a) ** 2
-    return math.sqrt(ss / (len(p) - 1))
+# fan
+WIN, LWIN, MIX = 180, 720, 0.6
+EXPO, INNER, CLIP = 0.35, 0.3, 10.0
+# empirical
+EWIN, HALF = 720, 240.0
+HS = (1, 2, 4, 8, 15, 30, 60, 120, 240)
+# blend
+W = 0.8
 
 
-def move_share(prices, window=720):
-    """Share of recent minutes in which the price changed at all."""
-    p = prices[-(window + 1):]
-    if len(p) < 3:
-        return 1.0
-    moved = sum(1 for a, b in zip(p, p[1:]) if b != a)
-    return moved / (len(p) - 1)
+def lg(v):
+    v = min(max(v, 1e-4), 1 - 1e-4)
+    return math.log(v / (1 - v))
 
 
-def forecast_market(prices, horizon, expo=0.4):
-    x = prices[-1]
-    s = recent_sigma(prices)
-    s = min(max(s, 0.0003), 0.01)
-    # inner quantiles shrink toward the last price when the book rarely ticks
-    inner = min(1.0, 0.3 + move_share(prices))
+def ilg(u):
+    if u < -30:
+        return 0.0
+    return 1 / (1 + math.exp(-u))
+
+
+def robust_sigma(d):
+    """RMS of moves clipped at CLIP x median nonzero move; also share of minutes that moved."""
+    n = max(1, len(d))
+    nz = sorted(abs(v) for v in d if v != 0)
+    if not nz:
+        return 0.0, 0.0
+    cap = CLIP * nz[len(nz) // 2]
+    return math.sqrt(sum(min(abs(v), cap) ** 2 for v in d) / n), len(nz) / n
+
+
+def fan(u, horizon):
+    d = [b - a for a, b in zip(u, u[1:])]
+    s1, sh1 = robust_sigma(d[-WIN:])
+    s2, sh2 = robust_sigma(d[-LWIN:])
+    s = math.sqrt(MIX * s1 * s1 + (1 - MIX) * s2 * s2)
+    kin = min(1.0, INNER + MIX * sh1 + (1 - MIX) * sh2)
+    ux = u[-1]
     rows = []
     for h in range(1, horizon + 1):
-        sd = s * h ** expo
-        row = []
-        for i, z in enumerate(Z):
-            k = inner if i in (1, 3) else 1.0
-            row.append(min(1.0, max(0.0, round(x + z * sd * k, 6))))
-        rows.append(row)
+        sd = s * h ** EXPO
+        rows.append([ux + z * sd * (kin if i in (1, 3) else 1.0) for i, z in enumerate(Z)])
+    return rows
+
+
+def wquant(pairs):
+    pairs.sort()
+    tw = sum(w for _, w in pairs)
+    out, acc, j = [], 0.0, 0
+    for t in TAUS:
+        target = t * tw
+        while j < len(pairs) - 1 and acc + pairs[j][1] < target:
+            acc += pairs[j][1]
+            j += 1
+        out.append(pairs[j][0])
+    return out
+
+
+def empirical(u, horizon):
+    u = u[-(EWIN + 241):]
+    n = len(u)
+    ux = u[-1]
+    table = []
+    for h in HS:
+        pairs = []
+        for i in range(max(0, n - 1 - EWIN), n - h):
+            age = n - 1 - (i + h)
+            pairs.append((u[i + h] - u[i], 0.5 ** (age / HALF)))
+        if len(pairs) < 5:
+            pairs = [(0.0, 1.0)]
+        table.append(wquant(pairs))
+    rows = []
+    for h in range(1, horizon + 1):
+        j = bisect.bisect_left(HS, h)
+        if j == 0:
+            qs = table[0]
+        elif j >= len(HS):
+            qs = table[-1]
+        else:
+            h0, h1 = HS[j - 1], HS[j]
+            w = (math.log(h) - math.log(h0)) / (math.log(h1) - math.log(h0))
+            qs = [a + w * (b - a) for a, b in zip(table[j - 1], table[j])]
+        rows.append([ux + c for c in qs])
+    return rows
+
+
+def forecast_market(prices, horizon):
+    prices = [float(v) for v in prices if v is not None]
+    if not prices:
+        return [[0.5] * 5 for _ in range(horizon)]
+    x = prices[-1]
+    if len(prices) < 3:
+        return [[min(1.0, max(0.0, round(x + z * 0.0025 * math.sqrt(h), 6))) for z in Z]
+                for h in range(1, horizon + 1)]
+    u = [lg(v) for v in prices[-(max(LWIN, EWIN + 240) + 1):]]
+    a = fan(u, horizon)
+    b = empirical(u, horizon)
+    rows = []
+    for ra, rb in zip(a, b):
+        r = [min(1.0, max(0.0, round(W * ilg(p) + (1 - W) * ilg(q), 6))) for p, q in zip(ra, rb)]
+        r[2] = min(1.0, max(0.0, round(x, 6)))
+        for i in range(1, 5):
+            if r[i] < r[i - 1]:
+                r[i] = r[i - 1]
+        rows.append(r)
     return rows
 
 
@@ -58,7 +141,13 @@ def main():
         horizon = int(case.get("horizon_minutes", 240))
         out = []
         for m in case["markets"]:
-            out.append({"id": m["id"], "q": forecast_market(m["prices"], horizon)})
+            try:
+                q = forecast_market(m["prices"], horizon)
+            except Exception:
+                x = float(m["prices"][-1])
+                q = [[min(1.0, max(0.0, round(x + z * 0.0025 * math.sqrt(h), 6))) for z in Z]
+                     for h in range(1, horizon + 1)]
+            out.append({"id": m["id"], "q": q})
         with open(os.path.join(out_dir, name[:-3] + ".out"), "w", encoding="utf-8") as f:
             json.dump({"forecasts": out}, f, separators=(",", ":"))
 
