@@ -20,7 +20,7 @@ skews the fan correctly for markets priced near 0:
 
 - **Median**: the last price. Drifts and reversions toward recent levels were tried and lost.
 - **Volatility fan**: a robust volatility of 1-minute logit moves (outliers clipped, short and
-  long windows mixed), shrunk toward a fixed prior, widening as h^0.35 (thin books flip back
+  long windows mixed), shrunk toward a fixed prior, widening as h^0.3 (thin books flip back
   and forth more than they trend) and opening slower over the first hour.
 - **Empirical changes**: recency-weighted quantiles of the market's own h-minute logit
   changes, blended in at 20%. Where they say the price is most likely unchanged, the 25% and

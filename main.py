@@ -26,7 +26,7 @@ Z = (-1.644854, -0.674490, 0.0, 0.674490, 1.644854)
 
 # fan
 WIN, LWIN, MIX = 180, 720, 0.6
-EXPO, INNER, CLIP = 0.35, 0.3, 10.0
+EXPO, INNER, CLIP = 0.3, 0.3, 10.0
 # empirical
 EWIN, HALF = 720, 240.0
 HS = (1, 2, 4, 8, 15, 30, 60, 120, 240)
@@ -34,7 +34,7 @@ HS = (1, 2, 4, 8, 15, 30, 60, 120, 240)
 S0, PW = 0.1, 0.6
 # blend, then outer tails: down tail x DM, up tail x UM (long shots decay more than they jump)
 W = 0.8
-DM, UM = 1.2, 0.8
+DM, UM = 1.2, 0.7
 # the fan opens slower than h^EXPO over the first RAMP_H minutes: x (h / RAMP_H)^RAMP_G
 RAMP_H, RAMP_G = 60, 0.5
 
