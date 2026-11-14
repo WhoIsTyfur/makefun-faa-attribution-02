@@ -35,6 +35,8 @@ S0, PW = 0.1, 0.6
 # blend, then outer tails: down tail x DM, up tail x UM (long shots decay more than they jump)
 W = 0.8
 DM, UM = 1.2, 0.8
+# the fan opens slower than h^EXPO over the first RAMP_H minutes: x (h / RAMP_H)^RAMP_G
+RAMP_H, RAMP_G = 60, 0.5
 
 
 def lg(v):
@@ -125,12 +127,20 @@ def forecast_market(prices, horizon):
     u = [lg(v) for v in prices[-(max(LWIN, EWIN + 240) + 1):]]
     a = fan(u, horizon)
     b = empirical(u, horizon)
+    ux = u[-1]
     rows = []
-    for ra, rb in zip(a, b):
+    for h, (ra, rb) in enumerate(zip(a, b), 1):
+        if h < RAMP_H:
+            f = (h / RAMP_H) ** RAMP_G
+            ra = [ux + f * (v - ux) for v in ra]
         r = [W * ilg(p) + (1 - W) * ilg(q) for p, q in zip(ra, rb)]
         r[0] = x - DM * (x - r[0])
         r[4] = x + UM * (r[4] - x)
         r[2] = x
+        # the market's own history says "unchanged" at this quantile: keep it on the price
+        for i in (1, 3):
+            if rb[i] == ux:
+                r[i] = x
         r = [min(1.0, max(0.0, round(v, 6))) for v in r]
         for i in range(1, 5):
             if r[i] < r[i - 1]:
