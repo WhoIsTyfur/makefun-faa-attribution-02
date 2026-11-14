@@ -23,9 +23,9 @@ skews the fan correctly for markets priced near 0:
   long windows mixed), shrunk toward a fixed prior, widening as h^0.3 (thin books flip back
   and forth more than they trend) and opening slower over the first hour.
 - **Empirical changes**: recency-weighted quantiles of the market's own h-minute logit
-  changes, blended in at 20%. Where they say the price is most likely unchanged, the 25% and
-  75% quantiles stay on the last price, which is what pinball loss rewards for a market that
-  rarely ticks.
+  changes. Where they say the price is most likely unchanged, the 25% and 75% quantiles stay
+  on the last price, which is what pinball loss rewards for a market that rarely ticks.
+  (Blending them into the fan itself lost on the calm FAA hours, so they only do this.)
 - **Skewed tails**: the 5% tail is widened and the 95% tail narrowed a little, because
   low-priced long shots drift down more often than they jump.
 

@@ -11,7 +11,9 @@ Model, per market, all in logit space (bounded in (0, 1), skewed for prices near
      book ticks at all, so a market that rarely moves keeps its inner quantiles near the
      last price, which is what pinball loss rewards;
   2. empirical quantiles of the market's own h-minute logit changes, recency weighted;
-  3. the forecast is W x (1) + (1 - W) x (2), quantile by quantile.
+  3. the forecast is W x (1) + (1 - W) x (2), quantile by quantile; on calm FAA hours the
+     fan alone (W = 1) scored best, so (2) now only decides where the 25/75% quantiles
+     stay on the last price (where its h-minute change quantile is exactly 0).
 The median is the last price: on these markets it beat every drift or reversion tried.
 The volatility is shrunk toward a fixed prior (S0, PW), and the outer tails are skewed:
 low-priced long shots drift down more often than they jump up.
@@ -26,15 +28,15 @@ Z = (-1.644854, -0.674490, 0.0, 0.674490, 1.644854)
 
 # fan
 WIN, LWIN, MIX = 180, 720, 0.6
-EXPO, INNER, CLIP = 0.3, 0.3, 10.0
+EXPO, INNER, CLIP = 0.3, 0.2, 10.0
 # empirical
 EWIN, HALF = 720, 240.0
 HS = (1, 2, 4, 8, 15, 30, 60, 120, 240)
 # prior logit volatility the market's own is shrunk toward (variance weight PW)
-S0, PW = 0.1, 0.6
+S0, PW = 0.08, 0.5
 # blend, then outer tails: down tail x DM, up tail x UM (long shots decay more than they jump)
-W = 0.8
-DM, UM = 1.2, 0.7
+W = 1.0
+DM, UM = 1.2, 0.5
 # the fan opens slower than h^EXPO over the first RAMP_H minutes: x (h / RAMP_H)^RAMP_G
 RAMP_H, RAMP_G = 60, 0.5
 
