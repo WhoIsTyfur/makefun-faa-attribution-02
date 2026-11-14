@@ -13,6 +13,8 @@ Model, per market, all in logit space (bounded in (0, 1), skewed for prices near
   2. empirical quantiles of the market's own h-minute logit changes, recency weighted;
   3. the forecast is W x (1) + (1 - W) x (2), quantile by quantile.
 The median is the last price: on these markets it beat every drift or reversion tried.
+The volatility is shrunk toward a fixed prior (S0, PW), and the outer tails are skewed:
+low-priced long shots drift down more often than they jump up.
 """
 import bisect
 import json
@@ -28,8 +30,11 @@ EXPO, INNER, CLIP = 0.35, 0.3, 10.0
 # empirical
 EWIN, HALF = 720, 240.0
 HS = (1, 2, 4, 8, 15, 30, 60, 120, 240)
-# blend
+# prior logit volatility the market's own is shrunk toward (variance weight PW)
+S0, PW = 0.1, 0.6
+# blend, then outer tails: down tail x DM, up tail x UM (long shots decay more than they jump)
 W = 0.8
+DM, UM = 1.2, 0.8
 
 
 def lg(v):
@@ -58,6 +63,7 @@ def fan(u, horizon):
     s1, sh1 = robust_sigma(d[-WIN:])
     s2, sh2 = robust_sigma(d[-LWIN:])
     s = math.sqrt(MIX * s1 * s1 + (1 - MIX) * s2 * s2)
+    s = math.sqrt((1 - PW) * s * s + PW * S0 * S0)
     kin = min(1.0, INNER + MIX * sh1 + (1 - MIX) * sh2)
     ux = u[-1]
     rows = []
@@ -121,8 +127,11 @@ def forecast_market(prices, horizon):
     b = empirical(u, horizon)
     rows = []
     for ra, rb in zip(a, b):
-        r = [min(1.0, max(0.0, round(W * ilg(p) + (1 - W) * ilg(q), 6))) for p, q in zip(ra, rb)]
-        r[2] = min(1.0, max(0.0, round(x, 6)))
+        r = [W * ilg(p) + (1 - W) * ilg(q) for p, q in zip(ra, rb)]
+        r[0] = x - DM * (x - r[0])
+        r[4] = x + UM * (r[4] - x)
+        r[2] = x
+        r = [min(1.0, max(0.0, round(v, 6))) for v in r]
         for i in range(1, 5):
             if r[i] < r[i - 1]:
                 r[i] = r[i - 1]
