@@ -21,14 +21,28 @@ def recent_sigma(prices, window=720):
     return math.sqrt(ss / (len(p) - 1))
 
 
-def forecast_market(prices, horizon):
+def move_share(prices, window=720):
+    """Share of recent minutes in which the price changed at all."""
+    p = prices[-(window + 1):]
+    if len(p) < 3:
+        return 1.0
+    moved = sum(1 for a, b in zip(p, p[1:]) if b != a)
+    return moved / (len(p) - 1)
+
+
+def forecast_market(prices, horizon, expo=0.4):
     x = prices[-1]
     s = recent_sigma(prices)
     s = min(max(s, 0.0003), 0.01)
+    # inner quantiles shrink toward the last price when the book rarely ticks
+    inner = min(1.0, 0.3 + move_share(prices))
     rows = []
     for h in range(1, horizon + 1):
-        sd = s * math.sqrt(h)
-        row = [min(1.0, max(0.0, round(x + z * sd, 6))) for z in Z]
+        sd = s * h ** expo
+        row = []
+        for i, z in enumerate(Z):
+            k = inner if i in (1, 3) else 1.0
+            row.append(min(1.0, max(0.0, round(x + z * sd * k, 6))))
         rows.append(row)
     return rows
 
